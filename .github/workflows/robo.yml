@@ -1,0 +1,31 @@
+name: Robo Apostas Over 1.5
+
+on:
+  schedule:
+    # Roda todos os dias às 14:00 UTC (11h da manhã no horário de Brasília)
+    - cron: '0 14 * * *'
+  workflow_dispatch: # Permite você rodar manualmente clicando num botão no GitHub
+
+jobs:
+  run-robo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar bibliotecas
+        run: |
+          pip install requests scipy pandas python-dotenv
+
+      - name: Rodar o Robô
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python src/bot.py
