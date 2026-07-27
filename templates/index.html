@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robô Over 1.5 - Painel</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #121212; color: #ffffff; text-align: center; padding: 50px; }
+        .card { background: #1e1e1e; border-radius: 10px; padding: 30px; max-width: 600px; margin: 0 auto; box-shadow: 0px 0px 15px rgba(0,0,0,0.5); }
+        .alert { color: #00ff00; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
+        .no-alert { color: #ff4d4d; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
+        .jogo { background: #2a2a2a; padding: 15px; margin: 10px 0; border-radius: 5px; text-align: left; }
+        .jogo span { font-weight: bold; color: #00ccff; }
+        .gestao { margin-top: 20px; font-size: 20px; }
+        .destaque { color: #00ff00; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>🤖 Painel do Robô - Over 1.5 Gols</h1>
+
+        {% if tem_aposta %}
+            <div class="alert">🚨 APOSTA DE VALOR ENCONTRADA! 🚨</div>
+            
+            {% for aposta in bilhete %}
+                <div class="jogo">
+                    <h3>{{ loop.index }}. {{ aposta.jogo }}</h3>
+                    <p>Mercado: Over 1.5 Gols | Odd: <span>{{ aposta.odd }}</span></p>
+                    <p>Probabilidade Matemática Real: <span>{{ (aposta.prob * 100)|round(2) }}%</span></p>
+                </div>
+            {% endfor %}
+
+            <div class="gestao">
+                <p>💵 Odd Final do Bilhete: <span class="destaque">{{ odd_final|round(2) }}</span></p>
+                <p>💰 Banca Atual: R$ {{ banca }}</p>
+                <h2>📌 APOSTAR: <span class="destaque">R$ {{ valor_aposta|round(2) }}</span></h2>
+            </div>
+        {% else %}
+            <div class="no-alert">❌ SEM APOSTAS HOJE</div>
+            <p>O robô analisou o mercado e não encontrou 3 jogos com valor matemático suficiente no mercado de Over 1.5 Gols.</p>
+            <p>Volte mais tarde ou amanhã!</p>
+        {% endif %}
+    </div>
+
+</body>
+</html>
