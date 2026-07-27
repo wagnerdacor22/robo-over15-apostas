@@ -1,0 +1,8 @@
+# Arquivos sensíveis
+.env
+
+# Pastas do Python
+__pycache__/
+*.pyc
+venv/
+.env
