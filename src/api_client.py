@@ -2,18 +2,23 @@ import requests
 import datetime
 from src.config import API_FOOTBALL_KEY, ODDS_API_KEY
 
-# MÁQUINA DO TEMPO: Forçando a data para 27/07/2026
-hoje = "2026-07-27"
+# O robô descobre a data de hoje real sozinho
+hoje = datetime.datetime.now().strftime("%Y-%m-%d")
+ano_atual = datetime.datetime.now().year
+mes_atual = datetime.datetime.now().month
 
-# Temporadas fixas para 2026
+# Define a temporada automaticamente
+temporada_europa = ano_atual - 1 if mes_atual <= 7 else ano_atual
+
+# Lista das ligas
 LIGAS_MONITORADAS = [
-    {"nome": "Brasileirão", "api_id": 71, "odds_key": "soccer_brazil_campeonato", "season": 2026},
-    {"nome": "Premier League", "api_id": 39, "odds_key": "soccer_epl", "season": 2025},
-    {"nome": "La Liga", "api_id": 140, "odds_key": "soccer_spain_la_liga", "season": 2025},
-    {"nome": "Serie A Itália", "api_id": 135, "odds_key": "soccer_italy_serie_a", "season": 2025},
-    {"nome": "Bundesliga", "api_id": 78, "odds_key": "soccer_germany_bundesliga", "season": 2025},
-    {"nome": "Ligue 1 França", "api_id": 61, "odds_key": "soccer_france_ligue_one", "season": 2025},
-    {"nome": "Champions League", "api_id": 2, "odds_key": "soccer_uefa_champs_league", "season": 2026}
+    {"nome": "Brasileirão", "api_id": 71, "odds_key": "soccer_brazil_campeonato", "season": ano_atual},
+    {"nome": "Premier League", "api_id": 39, "odds_key": "soccer_epl", "season": temporada_europa},
+    {"nome": "La Liga", "api_id": 140, "odds_key": "soccer_spain_la_liga", "season": temporada_europa},
+    {"nome": "Serie A Itália", "api_id": 135, "odds_key": "soccer_italy_serie_a", "season": temporada_europa},
+    {"nome": "Bundesliga", "api_id": 78, "odds_key": "soccer_germany_bundesliga", "season": temporada_europa},
+    {"nome": "Ligue 1 França", "api_id": 61, "odds_key": "soccer_france_ligue_one", "season": temporada_europa},
+    {"nome": "Champions League", "api_id": 2, "odds_key": "soccer_uefa_champs_league", "season": temporada_europa}
 ]
 
 def coletar_dados_mercado():
@@ -23,7 +28,7 @@ def coletar_dados_mercado():
     for liga in LIGAS_MONITORADAS:
         print(f"🔍 Verificando {liga['nome']} (Temporada {liga['season']})...")
         
-        # 1. Busca os jogos da liga na data fixada (27/07/2026)
+        # 1. Busca os jogos da liga hoje
         url_fixtures = "https://v3.football.api-sports.io/fixtures"
         params_fix = {"date": hoje, "league": liga["api_id"], "season": liga["season"]}
         resp_fix = requests.get(url_fixtures, headers=headers_api, params=params_fix)
