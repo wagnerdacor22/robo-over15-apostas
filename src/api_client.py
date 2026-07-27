@@ -26,14 +26,20 @@ def buscar_jogos_e_estatisticas():
         stats_fora = requests.get(url_stats, headers=headers, params={"league": 39, "season": 2023, "team": id_fora}).json().get('response', {})
         
         try:
-            jogos_analisados.append({
-                "time_casa": time_casa, "time_fora": time_fora,
-                "gc": stats_casa['goals']['for']['average']['all'],
-                "sc": stats_casa['goals']['against']['average']['all'],
-                "gf": stats_fora['goals']['for']['average']['all'],
-                "sf": stats_fora['goals']['against']['average']['all']
-            })
-        except: continue
+            # Blindagem: se não tiver dados, pula o time sem quebrar o código
+            gc = stats_casa['goals']['for']['average']['all']
+            sc = stats_casa['goals']['against']['average']['all']
+            gf = stats_fora['goals']['for']['average']['all']
+            sf = stats_fora['goals']['against']['average']['all']
+            
+            if gc and sc and gf and sf:
+                jogos_analisados.append({
+                    "time_casa": time_casa, "time_fora": time_fora,
+                    "gc": gc, "sc": sc, "gf": gf, "sf": sf
+                })
+        except:
+            print(f"⚠️ Dados incompletos para {time_casa} ou {time_fora}. Pulando.")
+            continue
             
     return jogos_analisados
 
