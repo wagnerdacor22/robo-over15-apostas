@@ -2,6 +2,7 @@ name: Robo Apostas Over 1.5
 
 on:
   schedule:
+    # 14:00 UTC = 11:00 BRT
     - cron: '0 14 * * *'
   workflow_dispatch:
 
@@ -19,7 +20,7 @@ jobs:
 
       - name: Instalar bibliotecas
         run: |
-          pip install requests scipy pandas python-dotenv
+          pip install -r requirements.txt
 
       - name: Rodar o Robo
         env:
@@ -27,4 +28,6 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BANCA_INICIAL: ${{ secrets.BANCA_INICIAL || '1000' }}
+          TZ: America/Sao_Paulo
         run: python -m src.bot
