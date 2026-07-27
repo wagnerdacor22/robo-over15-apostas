@@ -2,19 +2,18 @@ name: Robo Apostas Over 1.5
 
 on:
   schedule:
-    # Roda todos os dias às 14:00 UTC (11h da manhã no horário de Brasília)
     - cron: '0 14 * * *'
-  workflow_dispatch: # Permite você rodar manualmente clicando num botão no GitHub
+  workflow_dispatch:
 
 jobs:
   run-robo:
     runs-on: ubuntu-latest
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # <-- Atualizado para v4
 
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # <-- Atualizado para v5
         with:
           python-version: '3.10'
 
