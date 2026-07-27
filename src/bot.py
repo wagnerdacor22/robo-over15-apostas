@@ -2,7 +2,7 @@ import os
 import requests
 import traceback
 from src.motor import MotorPreditivo
-from src.api_client import buscar_jogos_e_estatisticas, buscar_odds_over15
+from src.api_client import coletar_dados_mercado, buscar_odds_over15_na_lista
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -19,14 +19,18 @@ def enviar_telegram(mensagem):
 
 def main():
     try:
+        enviar_telegram("🤖 Robô iniciado. Analisando múltiplas ligas internacionais. Aguarde...")
+        
         robo = MotorPreditivo(media_gols_liga=2.65)
-        jogos_do_dia = buscar_jogos_e_estatisticas()
+        jogos_do_dia = coletar_dados_mercado()
         apostas_valor = []
         
         for jogo in jogos_do_dia:
             xg_casa, xg_fora = robo.calcular_forcas(jogo["gc"], jogo["sc"], jogo["gf"], jogo["sf"])
             prob_real = robo.probabilidade_over_15(xg_casa, xg_fora)
-            odd_casa = buscar_odds_over15(jogo["time_casa"], jogo["time_fora"])
+            
+            # Buscamos a odd dentro da lista que já trouxemos
+            odd_casa = buscar_odds_over15_na_lista(jogo["time_casa"], jogo["time_fora"], jogo["odds_lista"])
             
             if odd_casa:
                 if prob_real > (1 / odd_casa):
@@ -54,10 +58,9 @@ def main():
             
             enviar_telegram(mensagem)
         else:
-            enviar_telegram("❌ O robô analisou o mercado e não encontrou 3 jogos com valor matemático para Over 1.5 hoje.")
+            enviar_telegram(f"❌ O robô varreu todas as ligas, analisou {len(jogos_do_dia)} jogos, mas não encontrou 3 partidas com valor matemático para Over 1.5 hoje.")
 
     except Exception as e:
-        # Se der qualquer erro, o robô te manda a mensagem de erro no Telegram!
         erro = f"⚠️ <b>O Robô deu um erro e travou:</b>\n\n{str(e)}"
         enviar_telegram(erro)
 
