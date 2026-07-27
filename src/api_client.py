@@ -2,7 +2,10 @@ import requests
 import datetime
 from src.config import API_FOOTBALL_KEY, ODDS_API_KEY
 
-# Lista das ligas que o robô vai analisar
+# MÁQUINA DO TEMPO: Forçando a data para 27/07/2026
+hoje = "2026-07-27"
+
+# Temporadas fixas para 2026
 LIGAS_MONITORADAS = [
     {"nome": "Brasileirão", "api_id": 71, "odds_key": "soccer_brazil_campeonato", "season": 2026},
     {"nome": "Premier League", "api_id": 39, "odds_key": "soccer_epl", "season": 2025},
@@ -14,15 +17,13 @@ LIGAS_MONITORADAS = [
 ]
 
 def coletar_dados_mercado():
-    hoje = datetime.datetime.now().strftime("%Y-%m-%d")
     headers_api = {"x-apisports-key": API_FOOTBALL_KEY}
-    
     jogos_analisados = []
     
     for liga in LIGAS_MONITORADAS:
-        print(f"🔍 Verificando {liga['nome']}...")
+        print(f"🔍 Verificando {liga['nome']} (Temporada {liga['season']})...")
         
-        # 1. Busca os jogos da liga hoje
+        # 1. Busca os jogos da liga na data fixada (27/07/2026)
         url_fixtures = "https://v3.football.api-sports.io/fixtures"
         params_fix = {"date": hoje, "league": liga["api_id"], "season": liga["season"]}
         resp_fix = requests.get(url_fixtures, headers=headers_api, params=params_fix)
@@ -30,11 +31,11 @@ def coletar_dados_mercado():
         if resp_fix.status_code != 200: continue
         jogos = resp_fix.json().get('response', [])
         
-        if not jogos: continue # Se não tem jogos hoje nessa liga, pula pra próxima
+        if not jogos: continue
             
-        print(f"⚽ {len(jogos)} jogo(s) encontrado(s) na {liga['nome']}. Buscando odds...")
+        print(f"⚽ {len(jogos)} jogo(s) encontrado(s) na {liga['nome']}.")
 
-        # 2. Busca as ODDS da liga inteira de uma vez (economiza API)
+        # 2. Busca as ODDS da liga inteira de uma vez
         url_odds = f"https://api.the-odds-api.com/v4/sports/{liga['odds_key']}/odds/"
         params_odds = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "totals", "oddsFormat": "decimal"}
         resp_odds = requests.get(url_odds, params=params_odds)
@@ -42,10 +43,8 @@ def coletar_dados_mercado():
         odds_da_liga = []
         if resp_odds.status_code == 200:
             odds_da_liga = resp_odds.json()
-        else:
-            print(f"⚠️ A API de Odds não retornou dados para {liga['nome']}.")
 
-        # 3. Busca estatísticas dos times e salva tudo
+        # 3. Busca estatísticas dos times
         for jogo in jogos:
             time_casa = jogo['teams']['home']['name']
             time_fora = jogo['teams']['away']['name']
@@ -69,7 +68,7 @@ def coletar_dados_mercado():
                     jogos_analisados.append({
                         "time_casa": time_casa, "time_fora": time_fora,
                         "gc": gc, "sc": sc, "gf": gf, "sf": sf,
-                        "odds_lista": odds_da_liga # Guardamos as odds junto com o jogo
+                        "odds_lista": odds_da_liga 
                     })
             except:
                 continue
@@ -77,7 +76,6 @@ def coletar_dados_mercado():
     return jogos_analisados
 
 def buscar_odds_over15_na_lista(time_casa, time_fora, odds_lista):
-    # Procura a odd do jogo dentro da lista que já baixamos
     for partida in odds_lista:
         if time_casa.lower() in partida['home_team'].lower() and time_fora.lower() in partida['away_team'].lower():
             for bookmaker in partida['bookmakers']:
