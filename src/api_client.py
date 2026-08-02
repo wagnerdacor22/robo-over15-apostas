@@ -4,37 +4,34 @@ import re
 import unicodedata
 from src.config import API_FOOTBALL_KEY, ODDS_API_KEY
 
-# Usa timezone do Brasil para "hoje"
-try:
-    from zoneinfo import ZoneInfo
-    TZ_BR = ZoneInfo("America/Sao_Paulo")
-    agora = datetime.datetime.now(TZ_BR)
-except Exception:
-    agora = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+# Usa UTC para a data da API (evita problemas de fuso horário)
+from datetime import timezone
+agora_utc = datetime.datetime.now(timezone.utc)
 
-hoje = agora.strftime("%Y-%m-%d")
-ano_atual = agora.year
-mes_atual = agora.month
+hoje = agora_utc.strftime("%Y-%m-%d")
+ano_atual = agora_utc.year
+mes_atual = agora_utc.month
 
 # Temporada europeia: começa em agosto (mês 8)
 # Em julho/2026 ainda estamos na temporada 2025/26 → season = 2025
-# A partir de agosto → season = 2026
+# A partir de agosto → tentamos season = ano_atual, mas com fallback para ano anterior
+# se não houver jogos (temporada nova pode não ter começado ainda)
 if mes_atual >= 8:
-    temporada_europa = ano_atual
+    temporada_europa_tentativa = ano_atual
 else:
-    temporada_europa = ano_atual - 1
+    temporada_europa_tentativa = ano_atual - 1
 
-# Brasileirão usa ano calendário
-temporada_brasil = ano_atual
+# Brasileirão usa ano calendário, com fallback similar
+temporada_brasil_tentativa = ano_atual
 
 LIGAS_MONITORADAS = [
-    {"nome": "Brasileirão", "api_id": 71, "odds_key": "soccer_brazil_campeonato", "season": temporada_brasil},
-    {"nome": "Premier League", "api_id": 39, "odds_key": "soccer_epl", "season": temporada_europa},
-    {"nome": "La Liga", "api_id": 140, "odds_key": "soccer_spain_la_liga", "season": temporada_europa},
-    {"nome": "Serie A Itália", "api_id": 135, "odds_key": "soccer_italy_serie_a", "season": temporada_europa},
-    {"nome": "Bundesliga", "api_id": 78, "odds_key": "soccer_germany_bundesliga", "season": temporada_europa},
-    {"nome": "Ligue 1 França", "api_id": 61, "odds_key": "soccer_france_ligue_one", "season": temporada_europa},
-    {"nome": "Champions League", "api_id": 2, "odds_key": "soccer_uefa_champs_league", "season": temporada_europa},
+    {"nome": "Brasileirão", "api_id": 71, "odds_key": "soccer_brazil_campeonato", "season": temporada_brasil_tentativa, "tipo": "brasil"},
+    {"nome": "Premier League", "api_id": 39, "odds_key": "soccer_epl", "season": temporada_europa_tentativa, "tipo": "europa"},
+    {"nome": "La Liga", "api_id": 140, "odds_key": "soccer_spain_la_liga", "season": temporada_europa_tentativa, "tipo": "europa"},
+    {"nome": "Serie A Itália", "api_id": 135, "odds_key": "soccer_italy_serie_a", "season": temporada_europa_tentativa, "tipo": "europa"},
+    {"nome": "Bundesliga", "api_id": 78, "odds_key": "soccer_germany_bundesliga", "season": temporada_europa_tentativa, "tipo": "europa"},
+    {"nome": "Ligue 1 França", "api_id": 61, "odds_key": "soccer_france_ligue_one", "season": temporada_europa_tentativa, "tipo": "europa"},
+    {"nome": "Champions League", "api_id": 2, "odds_key": "soccer_uefa_champs_league", "season": temporada_europa_tentativa, "tipo": "europa"},
 ]
 
 
@@ -93,6 +90,48 @@ def _to_float(valor):
         return None
 
 
+def _verificar_temporada_valida(liga_info):
+    """
+    Testa se a temporada configurada tem jogos na data atual.
+    Retorna (bool, int) -> (tem_jogos, temporada_correta).
+    """
+    if not API_FOOTBALL_KEY:
+        return False, liga_info["season"]
+    
+    headers_api = {"x-apisports-key": API_FOOTBALL_KEY}
+    url_fixtures = "https://v3.football.api-sports.io/fixtures"
+    
+    # Testa temporada atual
+    params = {
+        "date": hoje,
+        "league": liga_info["api_id"],
+        "season": liga_info["season"],
+    }
+    try:
+        resp = requests.get(url_fixtures, headers=headers_api, params=params, timeout=20)
+        if resp.status_code == 200:
+            jogos = resp.json().get("response", [])
+            if jogos:
+                return True, liga_info["season"]
+    except:
+        pass
+    
+    # Se não encontrou, tenta temporada anterior
+    season_anterior = liga_info["season"] - 1
+    params["season"] = season_anterior
+    try:
+        resp = requests.get(url_fixtures, headers=headers_api, params=params, timeout=20)
+        if resp.status_code == 200:
+            jogos = resp.json().get("response", [])
+            if jogos:
+                print(f"   🔄 Fallback: temporada {liga_info['season']} vazia, usando {season_anterior}")
+                return True, season_anterior
+    except:
+        pass
+    
+    return False, liga_info["season"]
+
+
 def coletar_dados_mercado():
     """
     Busca jogos de hoje nas ligas monitoradas + estatísticas + odds de Over 1.5.
@@ -107,9 +146,19 @@ def coletar_dados_mercado():
     headers_api = {"x-apisports-key": API_FOOTBALL_KEY}
     jogos_analisados = []
 
-    print(f"📅 Data usada: {hoje} | Temporada Europa: {temporada_europa} | Brasil: {temporada_brasil}")
+    print(f"📅 Data usada (UTC): {hoje} | Temporada Europa tentativa: {temporada_europa_tentativa} | Brasil tentativa: {temporada_brasil_tentativa}")
 
     for liga in LIGAS_MONITORADAS:
+        # Verifica se a temporada é válida e ajusta se necessário
+        tem_jogos, temporada_correta = _verificar_temporada_valida(liga)
+        if not tem_jogos:
+            print(f"\n🔍 Verificando {liga['nome']} (Temporada {temporada_correta})...")
+            print(f"   ℹ️ Nenhum jogo hoje na {liga['nome']}.")
+            continue
+        
+        # Atualiza a temporada para o loop
+        liga["season"] = temporada_correta
+        
         print(f"\n🔍 Verificando {liga['nome']} (Temporada {liga['season']})...")
 
         # 1. Fixtures do dia
