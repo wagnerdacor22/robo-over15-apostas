@@ -95,9 +95,6 @@ def _buscar_fixtures_por_data_e_season(data, liga_id, season, headers):
     }
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=20)
-        print(f"   [DEBUG] {liga_id} season={season} date={data} → status={resp.status_code}")
-        if resp.status_code != 200:
-            print(f"   [DEBUG] Resposta: {resp.text[:300]}")
         if resp.status_code == 200:
             jogos = resp.json().get("response", [])
             return resp.status_code, jogos
@@ -109,22 +106,21 @@ def _buscar_fixtures_por_data_e_season(data, liga_id, season, headers):
 
 def _encontrar_melhor_data_e_season(liga_info, headers):
     """
-    Testa múltiplas datas e temporadas para encontrar jogos.
+    Testa múltiplas datas (até 7 dias) e temporadas para encontrar jogos.
     Retorna (data_encontrada, season_encontrada, jogos) ou (None, None, []) se não achar.
     """
     seasons_para_testar = [liga_info["season"]]
     if liga_info["season"] > 2020:
         seasons_para_testar.append(liga_info["season"] - 1)
-    # Também testa a season atual + 1 para casos extremos
     if liga_info["season"] < ano_atual + 1:
         seasons_para_testar.append(liga_info["season"] + 1)
     
     # Remove duplicatas mantendo a ordem
     seasons_unicas = list(dict.fromkeys(seasons_para_testar))
     
-    # Datas para testar: hoje, amanhã, depois de amanhã
+    # Datas para testar: hoje até 7 dias depois
     datas_para_testar = []
-    for i in range(3):
+    for i in range(7):
         data = (agora_utc + timedelta(days=i)).strftime("%Y-%m-%d")
         datas_para_testar.append(data)
     
@@ -132,11 +128,18 @@ def _encontrar_melhor_data_e_season(liga_info, headers):
         for data in datas_para_testar:
             status, jogos = _buscar_fixtures_por_data_e_season(data, liga_info["api_id"], season, headers)
             if status == 200 and jogos:
-                if data != hoje or season != liga_info["season"]:
-                    print(f"   🔄 Encontrados jogos em {data} (season {season})")
+                print(f"   ✅ Jogos encontrados: {data} (season {season}) - {len(jogos)} partidas")
                 return data, season, jogos
-            # Pequena pausa para não estourar rate limit da API
-            # (remova se estiver com pressa, mas pode dar 429)
+    
+    # Fallback: testa o mês inteiro (datas aleatórias) na temporada preferencial
+    print(f"   🔍 Nada nos próximos 7 dias. Testando datas espaçadas no mês...")
+    for dia in [10, 15, 20, 25]:
+        data_teste = f"{ano_atual}-{mes_atual:02d}-{dia:02d}"
+        status, jogos = _buscar_fixtures_por_data_e_season(data_teste, liga_info["api_id"], liga_info["season"], headers)
+        if status == 200 and jogos:
+            print(f"   ✅ Jogos encontrados em data distante: {data_teste} (season {liga_info['season']}) - {len(jogos)} partidas")
+            print(f"   ⚠️ AVISO: Os jogos mais próximos estão em {data_teste}. O robô usará esses jogos, mas as odds podem não estar disponíveis ainda.")
+            return data_teste, liga_info["season"], jogos
     
     return None, None, []
 
@@ -166,7 +169,7 @@ def coletar_dados_mercado():
         data_encontrada, season_encontrada, jogos = _encontrar_melhor_data_e_season(liga, headers_api)
         
         if not jogos:
-            print(f"   ❌ Nenhum jogo encontrado (testadas 3 datas e 3 temporadas)")
+            print(f"   ❌ Nenhum jogo encontrado (testados 7 dias + datas espaçadas e 3 temporadas)")
             continue
         
         print(f"   ⚽ {len(jogos)} jogo(s) encontrado(s) em {data_encontrada} (season {season_encontrada}).")
