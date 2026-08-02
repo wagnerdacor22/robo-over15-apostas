@@ -5,7 +5,7 @@ import unicodedata
 from src.config import API_FOOTBALL_KEY, ODDS_API_KEY
 
 # Usa UTC para a data da API (evita problemas de fuso horário)
-from datetime import timezone
+from datetime import timezone, timedelta
 agora_utc = datetime.datetime.now(timezone.utc)
 
 hoje = agora_utc.strftime("%Y-%m-%d")
@@ -13,15 +13,12 @@ ano_atual = agora_utc.year
 mes_atual = agora_utc.month
 
 # Temporada europeia: começa em agosto (mês 8)
-# Em julho/2026 ainda estamos na temporada 2025/26 → season = 2025
-# A partir de agosto → tentamos season = ano_atual, mas com fallback para ano anterior
-# se não houver jogos (temporada nova pode não ter começado ainda)
 if mes_atual >= 8:
     temporada_europa_tentativa = ano_atual
 else:
     temporada_europa_tentativa = ano_atual - 1
 
-# Brasileirão usa ano calendário, com fallback similar
+# Brasileirão usa ano calendário
 temporada_brasil_tentativa = ano_atual
 
 LIGAS_MONITORADAS = [
@@ -39,12 +36,9 @@ def _normalizar_nome(nome: str) -> str:
     """Remove acentos, pontuação e palavras genéricas para matching mais robusto."""
     if not nome:
         return ""
-    # Remove acentos
     nfkd = unicodedata.normalize("NFKD", nome)
     sem_acento = "".join(c for c in nfkd if not unicodedata.combining(c))
-    # Minúsculo + só letras/números/espaços
     limpo = re.sub(r"[^a-z0-9\s]", " ", sem_acento.lower())
-    # Remove palavras comuns que diferem entre APIs
     lixo = {
         "fc", "cf", "sc", "ac", "as", "ss", "ud", "cd", "rcd", "afc", "sfc",
         "club", "football", "soccer", "de", "da", "do", "dos", "das", "the",
@@ -63,10 +57,8 @@ def _nomes_parecidos(a: str, b: str) -> bool:
         return False
     if na == nb:
         return True
-    # Um contém o outro (ex: "palmeiras" vs "palmeiras sp")
     if na in nb or nb in na:
         return True
-    # Tokens em comum (pelo menos 1 token significativo)
     ta = set(na.split())
     tb = set(nb.split())
     comuns = ta & tb
@@ -90,51 +82,66 @@ def _to_float(valor):
         return None
 
 
-def _verificar_temporada_valida(liga_info):
+def _buscar_fixtures_por_data_e_season(data, liga_id, season, headers):
     """
-    Testa se a temporada configurada tem jogos na data atual.
-    Retorna (bool, int) -> (tem_jogos, temporada_correta).
+    Busca fixtures em uma data e temporada específicas.
+    Retorna (status_code, lista_de_jogos).
     """
-    if not API_FOOTBALL_KEY:
-        return False, liga_info["season"]
-    
-    headers_api = {"x-apisports-key": API_FOOTBALL_KEY}
-    url_fixtures = "https://v3.football.api-sports.io/fixtures"
-    
-    # Testa temporada atual
+    url = "https://v3.football.api-sports.io/fixtures"
     params = {
-        "date": hoje,
-        "league": liga_info["api_id"],
-        "season": liga_info["season"],
+        "date": data,
+        "league": liga_id,
+        "season": season,
     }
     try:
-        resp = requests.get(url_fixtures, headers=headers_api, params=params, timeout=20)
+        resp = requests.get(url, headers=headers, params=params, timeout=20)
         if resp.status_code == 200:
             jogos = resp.json().get("response", [])
-            if jogos:
-                return True, liga_info["season"]
-    except:
-        pass
+            return resp.status_code, jogos
+        return resp.status_code, []
+    except Exception as e:
+        print(f"   ⚠️ Erro na chamada: {e}")
+        return 0, []
+
+
+def _encontrar_melhor_data_e_season(liga_info, headers):
+    """
+    Testa múltiplas datas e temporadas para encontrar jogos.
+    Retorna (data_encontrada, season_encontrada, jogos) ou (None, None, []) se não achar.
+    """
+    seasons_para_testar = [liga_info["season"]]
+    if liga_info["season"] > 2020:
+        seasons_para_testar.append(liga_info["season"] - 1)
+    # Também testa a season atual + 1 para casos extremos
+    if liga_info["season"] < ano_atual + 1:
+        seasons_para_testar.append(liga_info["season"] + 1)
     
-    # Se não encontrou, tenta temporada anterior
-    season_anterior = liga_info["season"] - 1
-    params["season"] = season_anterior
-    try:
-        resp = requests.get(url_fixtures, headers=headers_api, params=params, timeout=20)
-        if resp.status_code == 200:
-            jogos = resp.json().get("response", [])
-            if jogos:
-                print(f"   🔄 Fallback: temporada {liga_info['season']} vazia, usando {season_anterior}")
-                return True, season_anterior
-    except:
-        pass
+    # Remove duplicatas mantendo a ordem
+    seasons_unicas = list(dict.fromkeys(seasons_para_testar))
     
-    return False, liga_info["season"]
+    # Datas para testar: hoje, amanhã, depois de amanhã
+    datas_para_testar = []
+    for i in range(3):
+        data = (agora_utc + timedelta(days=i)).strftime("%Y-%m-%d")
+        datas_para_testar.append(data)
+    
+    for season in seasons_unicas:
+        for data in datas_para_testar:
+            status, jogos = _buscar_fixtures_por_data_e_season(data, liga_info["api_id"], season, headers)
+            if status == 200 and jogos:
+                if data != hoje or season != liga_info["season"]:
+                    print(f"   🔄 Encontrados jogos em {data} (season {season})")
+                return data, season, jogos
+            # Pequena pausa para não estourar rate limit da API
+            # (remova se estiver com pressa, mas pode dar 429)
+    
+    return None, None, []
 
 
 def coletar_dados_mercado():
     """
-    Busca jogos de hoje nas ligas monitoradas + estatísticas + odds de Over 1.5.
+    Busca jogos nas ligas monitoradas + estatísticas + odds de Over 1.5.
+    Faz fallback automático de data e temporada.
     Retorna lista de dicts prontos para o motor preditivo.
     """
     if not API_FOOTBALL_KEY:
@@ -146,46 +153,26 @@ def coletar_dados_mercado():
     headers_api = {"x-apisports-key": API_FOOTBALL_KEY}
     jogos_analisados = []
 
-    print(f"📅 Data usada (UTC): {hoje} | Temporada Europa tentativa: {temporada_europa_tentativa} | Brasil tentativa: {temporada_brasil_tentativa}")
+    print(f"📅 Data base (UTC): {hoje}")
+    print(f"🏆 Temporadas tentativa → Europa: {temporada_europa_tentativa} | Brasil: {temporada_brasil_tentativa}")
+    print("=" * 60)
 
     for liga in LIGAS_MONITORADAS:
-        # Verifica se a temporada é válida e ajusta se necessário
-        tem_jogos, temporada_correta = _verificar_temporada_valida(liga)
-        if not tem_jogos:
-            print(f"\n🔍 Verificando {liga['nome']} (Temporada {temporada_correta})...")
-            print(f"   ℹ️ Nenhum jogo hoje na {liga['nome']}.")
-            continue
+        print(f"\n🔍 Verificando {liga['nome']} (Temporada preferencial: {liga['season']})...")
         
-        # Atualiza a temporada para o loop
-        liga["season"] = temporada_correta
+        data_encontrada, season_encontrada, jogos = _encontrar_melhor_data_e_season(liga, headers_api)
         
-        print(f"\n🔍 Verificando {liga['nome']} (Temporada {liga['season']})...")
-
-        # 1. Fixtures do dia
-        url_fixtures = "https://v3.football.api-sports.io/fixtures"
-        params_fix = {
-            "date": hoje,
-            "league": liga["api_id"],
-            "season": liga["season"],
-        }
-        try:
-            resp_fix = requests.get(url_fixtures, headers=headers_api, params=params_fix, timeout=20)
-        except requests.RequestException as e:
-            print(f"   ⚠️ Erro de rede em fixtures: {e}")
-            continue
-
-        if resp_fix.status_code != 200:
-            print(f"   ⚠️ Status fixtures: {resp_fix.status_code} → {resp_fix.text[:200]}")
-            continue
-
-        jogos = resp_fix.json().get("response", [])
         if not jogos:
-            print(f"   ℹ️ Nenhum jogo hoje na {liga['nome']}.")
+            print(f"   ❌ Nenhum jogo encontrado (testadas 3 datas e {len(set([liga['season'], liga['season']-1, liga['season']+1]))} temporadas)")
             continue
+        
+        print(f"   ⚽ {len(jogos)} jogo(s) encontrado(s) em {data_encontrada} (season {season_encontrada}).")
+        
+        # Usa a data/season encontradas
+        data_usar = data_encontrada
+        season_usar = season_encontrada
 
-        print(f"   ⚽ {len(jogos)} jogo(s) encontrado(s).")
-
-        # 2. Odds da liga (uma chamada só)
+        # 2. Odds da liga (sempre busca odds do dia atual, a API de odds é diária)
         odds_da_liga = []
         if ODDS_API_KEY:
             url_odds = f"https://api.the-odds-api.com/v4/sports/{liga['odds_key']}/odds/"
@@ -227,13 +214,13 @@ def coletar_dados_mercado():
                 stats_casa_req = requests.get(
                     url_stats,
                     headers=headers_api,
-                    params={"league": liga["api_id"], "season": liga["season"], "team": id_casa},
+                    params={"league": liga["api_id"], "season": season_usar, "team": id_casa},
                     timeout=15,
                 )
                 stats_fora_req = requests.get(
                     url_stats,
                     headers=headers_api,
-                    params={"league": liga["api_id"], "season": liga["season"], "team": id_fora},
+                    params={"league": liga["api_id"], "season": season_usar, "team": id_fora},
                     timeout=15,
                 )
             except requests.RequestException:
@@ -268,7 +255,8 @@ def coletar_dados_mercado():
                 print(f"   ⚠️ Erro ao processar stats de {time_casa} vs {time_fora}: {e}")
                 continue
 
-    print(f"\n📦 Total de jogos com dados completos: {len(jogos_analisados)}")
+    print(f"\n{'='*60}")
+    print(f"📦 Total de jogos com dados completos: {len(jogos_analisados)}")
     return jogos_analisados
 
 
@@ -287,7 +275,6 @@ def buscar_odds_over15_na_lista(time_casa, time_fora, odds_lista):
         home = partida.get("home_team", "")
         away = partida.get("away_team", "")
 
-        # Matching nos dois sentidos (às vezes APIs invertem casa/fora em amistosos etc.)
         match_direto = _nomes_parecidos(time_casa, home) and _nomes_parecidos(time_fora, away)
         match_invertido = _nomes_parecidos(time_casa, away) and _nomes_parecidos(time_fora, home)
 
@@ -306,7 +293,6 @@ def buscar_odds_over15_na_lista(time_casa, time_fora, odds_lista):
 
     if not melhores:
         return None
-    # Retorna a maior odd (melhor preço para o apostador)
     return max(melhores)
 
 
@@ -316,11 +302,6 @@ def buscar_jogos_e_estatisticas():
 
 
 def buscar_odds_over15(time_casa, time_fora, odds_lista=None):
-    """
-    Versão compatível. Se odds_lista não for passada, não consegue buscar
-    (a API de odds é por liga, não por jogo isolado).
-    Prefira usar buscar_odds_over15_na_lista com a lista já coletada.
-    """
     if odds_lista is None:
         return None
     return buscar_odds_over15_na_lista(time_casa, time_fora, odds_lista)
