@@ -95,12 +95,15 @@ def _buscar_fixtures_por_data_e_season(data, liga_id, season, headers):
     }
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=20)
+        print(f"   [DEBUG] {liga_id} season={season} date={data} → status={resp.status_code}")
+        if resp.status_code != 200:
+            print(f"   [DEBUG] Resposta: {resp.text[:300]}")
         if resp.status_code == 200:
             jogos = resp.json().get("response", [])
             return resp.status_code, jogos
         return resp.status_code, []
     except Exception as e:
-        print(f"   ⚠️ Erro na chamada: {e}")
+        print(f"   [DEBUG] Exceção: {e}")
         return 0, []
 
 
@@ -163,7 +166,7 @@ def coletar_dados_mercado():
         data_encontrada, season_encontrada, jogos = _encontrar_melhor_data_e_season(liga, headers_api)
         
         if not jogos:
-            print(f"   ❌ Nenhum jogo encontrado (testadas 3 datas e {len(set([liga['season'], liga['season']-1, liga['season']+1]))} temporadas)")
+            print(f"   ❌ Nenhum jogo encontrado (testadas 3 datas e 3 temporadas)")
             continue
         
         print(f"   ⚽ {len(jogos)} jogo(s) encontrado(s) em {data_encontrada} (season {season_encontrada}).")
