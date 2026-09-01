@@ -110,6 +110,8 @@ class DiagnosticoColeta:
     def resumo(self, limite_erros=4):
         if self.eventos_com_odds == 0:
             fixtures_resumo = "nao consultados (nenhum evento com odds)"
+        elif self.chamadas_football_data > 0 and self.chamadas_api_football == 0:
+            fixtures_resumo = "eventos da Odds API + historico Football-Data"
         else:
             fixtures_resumo = str(self.fixtures_encontradas)
 
@@ -117,9 +119,8 @@ class DiagnosticoColeta:
             f"Periodo: {self.inicio} a {self.fim}",
             f"Eventos encontrados na Odds API: {self.eventos_odds_api}",
             f"Consultas de linha Over 1.5: {self.consultas_alternate_totals}",
-            f"Odds: {self.eventos_com_odds} evento(s)",
-            f"Fixtures: {fixtures_resumo}",
-            f"Com odds Over 1.5: {self.jogos_com_odds}",
+            f"Com odds Over 1.5: {self.eventos_com_odds} evento(s)",
+            f"Fixtures/pareamento: {fixtures_resumo}",
             f"Com estatisticas: {self.jogos_com_estatisticas}",
         ]
         if self.quota_api_football != "desconhecida":
@@ -759,7 +760,20 @@ def coletar_dados_mercado(com_diagnostico=False, agora=None):
 
         season = _temporada(liga, inicio)
         jogos_liga = []
-        if api_client:
+
+        # Football-Data.org e a fonte preferida para o plano gratuito: o Free
+        # Tier cobre as principais ligas monitoradas e a temporada corrente.
+        # A API-Football fica como fallback, pois o plano Free dela pode bloquear
+        # temporadas recentes (como 2026).
+        if fd_client:
+            print("   Buscando historico pela Football-Data...")
+            jogos_liga = _coletar_liga_football_data(
+                liga, odds_liga, season, fd_client, diagnostico
+            )
+
+        if not jogos_liga and api_client:
+            if fd_client:
+                print("   Football-Data sem dados completos; tentando API-Football...")
             jogos_liga = _coletar_liga_api_football(
                 liga,
                 odds_liga,
@@ -771,10 +785,19 @@ def coletar_dados_mercado(com_diagnostico=False, agora=None):
                 stats_cache,
             )
 
-        if not jogos_liga and fd_client:
-            print("   Tentando estatisticas pela Football-Data...")
-            jogos_liga = _coletar_liga_football_data(
-                liga, odds_liga, season, fd_client, diagnostico
+        if (
+            not jogos_liga
+            and api_client
+            and not fd_client
+            and any(
+                "free plans do not have access to this season" in erro.lower()
+                for erro in diagnostico.erros
+            )
+        ):
+            diagnostico.erro(
+                "configuracao",
+                "API-Football Free bloqueia a temporada atual; configure o secret "
+                "FOOTBALL_DATA_KEY para usar a fonte gratuita suportada pelo robo",
             )
 
         jogos_analisados.extend(jogos_liga)
