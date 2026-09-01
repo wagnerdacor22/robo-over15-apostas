@@ -135,9 +135,16 @@ def montar_bilhete_extra(apostas):
 
 def montar_mensagem_apostas(apostas, total_analisado):
     selecionadas = apostas[:MAX_JOGOS_ENVIO]
+    qtd = len(selecionadas)
     mensagem = (
-        f"✅ <b>{len(selecionadas)} selecao(oes) de valor - Over 1.5</b>\n"
+        f"✅ <b>{qtd} selecao(oes) de valor - Over 1.5</b>\n"
         f"Analisados com dados completos: {total_analisado}\n\n"
+        "🎯 <b>ACAO PRINCIPAL DO ROBO</b>\n"
+        f"Faca {qtd} aposta(s) <b>SIMPLES e SEPARADA(S)</b>, uma por jogo, "
+        "no mercado <b>Mais de 1.5 gols na partida</b>.\n"
+        "❌ <b>Nao junte estas selecoes em uma multipla</b> apenas por aparecerem juntas.\n"
+        "Uma multipla so e indicada quando o robo enviar explicitamente "
+        "<b>BILHETE EXTRA LIBERADO</b>.\n\n"
     )
     for indice, aposta in enumerate(selecionadas, 1):
         valor = BANCA_INICIAL * aposta["kelly"]
@@ -145,9 +152,10 @@ def montar_mensagem_apostas(apostas, total_analisado):
         if aposta.get("liga"):
             mensagem += f"🏆 {escape(aposta['liga'])}\n"
         mensagem += (
+            "🎯 Mercado: <b>Mais de 1.5 gols na partida</b>\n"
             f"📈 Odd: {aposta['odd']:.2f} | Modelo: {aposta['prob']*100:.1f}%\n"
             f"➕ Vantagem estimada: {aposta['edge']*100:.1f} p.p.\n"
-            f"💵 Entrada individual sugerida: R$ {valor:.2f}\n"
+            f"💵 Entrada simples sugerida: R$ {valor:.2f}\n"
         )
         if aposta.get("bookmaker"):
             mensagem += f"🏦 Odd em: {escape(aposta['bookmaker'])}\n"
@@ -157,6 +165,57 @@ def montar_mensagem_apostas(apostas, total_analisado):
         "Estimativa estatistica nao garante resultado."
     )
     return mensagem
+
+
+def montar_mensagem_bilhete_nao_liberado(apostas):
+    """Explica claramente o que fazer quando a multipla extra e recusada."""
+    selecionadas = apostas[:MAX_JOGOS_ENVIO]
+    linhas = [
+        "🛡️ <b>MULTIPLA NAO LIBERADA</b>",
+        "",
+        "✅ <b>Acao de hoje:</b> mantenha as apostas aprovadas como "
+        "<b>SIMPLES e SEPARADAS</b>.",
+        "❌ <b>Nao monte um bilhete juntando os jogos abaixo.</b>",
+    ]
+
+    for indice, aposta in enumerate(selecionadas, 1):
+        valor = BANCA_INICIAL * aposta["kelly"]
+        linhas.append(
+            f"{indice}) {escape(aposta['jogo'])} — Over 1.5 — R$ {valor:.2f}"
+        )
+
+    # Mostra a odd combinada das selecoes exibidas quando ela ajuda a explicar
+    # por que nao existe bilhete extra. O filtro oficial continua sendo feito
+    # por montar_bilhete_extra(), com todos os criterios de seguranca.
+    if len(selecionadas) >= EXTRA_QTD_JOGOS:
+        melhor_grupo = selecionadas[:EXTRA_QTD_JOGOS]
+        odd_combinada = prod(item["odd"] for item in melhor_grupo)
+        linhas.extend(
+            [
+                "",
+                f"ℹ️ Odd combinada destas {EXTRA_QTD_JOGOS} selecoes: "
+                f"<b>{odd_combinada:.2f}</b>.",
+            ]
+        )
+        if odd_combinada < EXTRA_ODD_MINIMA:
+            linhas.append(
+                f"Ela esta abaixo da odd minima de <b>{EXTRA_ODD_MINIMA:.2f}</b> "
+                "exigida para o bilhete extra."
+            )
+        elif odd_combinada > EXTRA_ODD_MAXIMA:
+            linhas.append(
+                f"Ela esta acima da odd maxima de <b>{EXTRA_ODD_MAXIMA:.2f}</b> "
+                "permitida para o bilhete extra."
+            )
+
+    linhas.extend(
+        [
+            "",
+            "O bilhete extra so sera enviado quando a combinacao cumprir "
+            "simultaneamente probabilidade, vantagem, amostra e faixa de odd.",
+        ]
+    )
+    return "\n".join(linhas)
 
 
 def montar_mensagem_bilhete_extra(bilhete):
@@ -200,12 +259,7 @@ def main():
             if bilhete_extra:
                 enviar_telegram(montar_mensagem_bilhete_extra(bilhete_extra))
             elif ATIVAR_BILHETE_EXTRA:
-                enviar_telegram(
-                    "🛡️ <b>Bilhete extra nao liberado hoje.</b>\n\n"
-                    "Nao houve uma combinacao que cumprisse simultaneamente os "
-                    "filtros de probabilidade, vantagem, amostra e faixa de odd. "
-                    "O robo nao forcara uma multipla apenas para gerar palpite."
-                )
+                enviar_telegram(montar_mensagem_bilhete_nao_liberado(apostas_valor))
         elif jogos_do_dia:
             enviar_telegram(
                 "ℹ️ <b>A coleta funcionou, mas nao houve aposta de valor.</b>\n\n"
