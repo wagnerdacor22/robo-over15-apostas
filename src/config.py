@@ -33,7 +33,7 @@ BANCA_INICIAL = _decimal("BANCA_INICIAL", 1000.0, 0.0)
 
 # Coleta e selecao
 FUSO_HORARIO = os.getenv("FUSO_HORARIO", "America/Sao_Paulo")
-DIAS_ANALISE = _inteiro("DIAS_ANALISE", 1, 1)
+DIAS_ANALISE = _inteiro("DIAS_ANALISE", 4, 1)
 MAX_JOGOS_POR_LIGA = _inteiro("MAX_JOGOS_POR_LIGA", 8, 1)
 MAX_JOGOS_ENVIO = _inteiro("MAX_JOGOS_ENVIO", 3, 1)
 MARGEM_VALOR_MINIMA = _decimal("MARGEM_VALOR_MINIMA", 0.03, 0.0)
