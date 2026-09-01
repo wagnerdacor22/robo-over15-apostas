@@ -16,10 +16,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -36,7 +36,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BANCA_INICIAL: ${{ secrets.BANCA_INICIAL || '1000' }}
           FUSO_HORARIO: America/Sao_Paulo
-          DIAS_ANALISE: '1'
+          DIAS_ANALISE: '4'
           MAX_JOGOS_ENVIO: '3'
           MARGEM_VALOR_MINIMA: '0.03'
           ATIVAR_BILHETE_EXTRA: 'true'
