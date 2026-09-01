@@ -16,6 +16,8 @@ from src.config import (
     FOOTBALL_DATA_KEY,
     FUSO_HORARIO,
     MAX_JOGOS_POR_LIGA,
+    MAX_ODDS_EVENTOS_POR_EXECUCAO,
+    MAX_ODDS_EVENTOS_POR_LIGA,
     ODDS_API_KEY,
     ODDS_REGIONS,
 )
@@ -92,6 +94,8 @@ class DiagnosticoColeta:
     jogos_com_estatisticas: int = 0
     chamadas_api_football: int = 0
     chamadas_odds: int = 0
+    eventos_odds_api: int = 0
+    consultas_alternate_totals: int = 0
     chamadas_football_data: int = 0
     quota_api_football: str = "desconhecida"
     quota_odds: str = "desconhecida"
@@ -111,6 +115,8 @@ class DiagnosticoColeta:
 
         linhas = [
             f"Periodo: {self.inicio} a {self.fim}",
+            f"Eventos encontrados na Odds API: {self.eventos_odds_api}",
+            f"Consultas de linha Over 1.5: {self.consultas_alternate_totals}",
             f"Odds: {self.eventos_com_odds} evento(s)",
             f"Fixtures: {fixtures_resumo}",
             f"Com odds Over 1.5: {self.jogos_com_odds}",
@@ -346,7 +352,7 @@ def _detalhes_over15(partida):
     melhores = []
     for bookmaker in partida.get("bookmakers", []):
         for market in bookmaker.get("markets", []):
-            if market.get("key") != "totals":
+            if market.get("key") not in ("totals", "alternate_totals"):
                 continue
             for outcome in market.get("outcomes", []):
                 ponto = _to_float(outcome.get("point"))
@@ -387,30 +393,28 @@ def buscar_odds_over15_na_lista(time_casa, time_fora, odds_lista):
     return detalhes["odd"] if detalhes else None
 
 
-def _buscar_odds_liga(liga, inicio_local, fim_local, diagnostico):
-    if not ODDS_API_KEY:
-        return []
-    url = f"https://api.the-odds-api.com/v4/sports/{liga['odds_key']}/odds/"
+def _atualizar_quota_odds(resposta, diagnostico):
+    restante = resposta.headers.get("x-requests-remaining")
+    if restante is not None:
+        diagnostico.quota_odds = restante
+
+
+def _buscar_eventos_liga(liga, inicio_local, fim_local, diagnostico):
+    """Lista eventos sem gastar a cota da The Odds API."""
+    url = f"https://api.the-odds-api.com/v4/sports/{liga['odds_key']}/events"
     params = {
         "apiKey": ODDS_API_KEY,
-        "regions": ODDS_REGIONS,
-        "markets": "totals",
-        "oddsFormat": "decimal",
         "dateFormat": "iso",
         "commenceTimeFrom": _iso_utc(inicio_local),
         "commenceTimeTo": _iso_utc(fim_local),
     }
     try:
         resposta = requests.get(url, params=params, timeout=API_TIMEOUT)
-        diagnostico.chamadas_odds += 1
     except requests.RequestException as exc:
         diagnostico.erro("The Odds API", f"erro de rede em {liga['nome']}: {exc}")
         return []
 
-    restante = resposta.headers.get("x-requests-remaining")
-    if restante is not None:
-        diagnostico.quota_odds = restante
-
+    _atualizar_quota_odds(resposta, diagnostico)
     try:
         payload = resposta.json()
     except ValueError:
@@ -418,14 +422,86 @@ def _buscar_odds_liga(liga, inicio_local, fim_local, diagnostico):
     if resposta.status_code != 200:
         diagnostico.erro(
             "The Odds API",
-            f"{liga['nome']} HTTP {resposta.status_code}: {_mensagem_payload(payload)}",
+            f"{liga['nome']} eventos HTTP {resposta.status_code}: {_mensagem_payload(payload)}",
         )
         return []
     if not isinstance(payload, list):
-        diagnostico.erro("The Odds API", f"resposta inesperada em {liga['nome']}")
+        diagnostico.erro("The Odds API", f"resposta de eventos inesperada em {liga['nome']}")
         return []
 
-    com_linha = [evento for evento in payload if _detalhes_over15(evento)]
+    payload.sort(key=lambda item: item.get("commence_time", ""))
+    diagnostico.eventos_odds_api += len(payload)
+    return payload
+
+
+def _buscar_alternate_totals_evento(liga, evento, diagnostico):
+    """Busca linhas alternativas para um evento e extrai especificamente Over 1.5."""
+    evento_id = evento.get("id")
+    if not evento_id:
+        return None
+    url = (
+        f"https://api.the-odds-api.com/v4/sports/{liga['odds_key']}"
+        f"/events/{evento_id}/odds"
+    )
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": ODDS_REGIONS,
+        "markets": "alternate_totals",
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+    }
+    try:
+        resposta = requests.get(url, params=params, timeout=API_TIMEOUT)
+        diagnostico.chamadas_odds += 1
+        diagnostico.consultas_alternate_totals += 1
+    except requests.RequestException as exc:
+        diagnostico.erro(
+            "The Odds API",
+            f"erro de rede nas linhas de {evento.get('home_team', '')} x {evento.get('away_team', '')}: {exc}",
+        )
+        return None
+
+    _atualizar_quota_odds(resposta, diagnostico)
+    try:
+        payload = resposta.json()
+    except ValueError:
+        payload = {}
+    if resposta.status_code != 200:
+        diagnostico.erro(
+            "The Odds API",
+            f"{liga['nome']} evento {evento_id} HTTP {resposta.status_code}: {_mensagem_payload(payload)}",
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    detalhes = _detalhes_over15(payload)
+    if not detalhes:
+        return None
+    return payload
+
+
+def _buscar_odds_liga(liga, inicio_local, fim_local, diagnostico, orcamento):
+    if not ODDS_API_KEY:
+        return []
+
+    eventos = _buscar_eventos_liga(liga, inicio_local, fim_local, diagnostico)
+    if not eventos:
+        return []
+
+    com_linha = []
+    tentativas_liga = 0
+    for evento in eventos:
+        if orcamento["tentativas"] >= MAX_ODDS_EVENTOS_POR_EXECUCAO:
+            break
+        if tentativas_liga >= MAX_ODDS_EVENTOS_POR_LIGA:
+            break
+        orcamento["tentativas"] += 1
+        tentativas_liga += 1
+        payload = _buscar_alternate_totals_evento(liga, evento, diagnostico)
+        if payload and _detalhes_over15(payload):
+            com_linha.append(payload)
+
     diagnostico.eventos_com_odds += len(com_linha)
     return com_linha
 
@@ -665,14 +741,20 @@ def coletar_dados_mercado(com_diagnostico=False, agora=None):
     api_client = ApiFootballClient(diagnostico) if API_FOOTBALL_KEY else None
     fd_client = FootballDataClient(diagnostico) if FOOTBALL_DATA_KEY else None
     stats_cache = {}
+    orcamento_odds = {"tentativas": 0}
 
     print(f"Periodo local ({FUSO_HORARIO}): {inicio} a {fim}")
     for liga in LIGAS_MONITORADAS:
         diagnostico.ligas_consultadas += 1
         print(f"\nVerificando {liga['nome']}...")
-        odds_liga = _buscar_odds_liga(liga, inicio_local, fim_local, diagnostico)
+        odds_liga = _buscar_odds_liga(
+            liga, inicio_local, fim_local, diagnostico, orcamento_odds
+        )
         if not odds_liga:
-            print("   Sem eventos com linha Over 1.5 no periodo.")
+            if orcamento_odds["tentativas"] >= MAX_ODDS_EVENTOS_POR_EXECUCAO:
+                print("   Limite seguro de consultas de odds atingido nesta execucao.")
+            else:
+                print("   Sem evento com linha alternativa Over 1.5 no periodo.")
             continue
 
         season = _temporada(liga, inicio)
