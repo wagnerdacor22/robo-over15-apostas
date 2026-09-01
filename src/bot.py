@@ -1,8 +1,26 @@
 import os
+from html import escape
+from itertools import combinations
+from math import prod
+
 import requests
+
+from src.api_client import coletar_dados_mercado
+from src.config import (
+    ATIVAR_BILHETE_EXTRA,
+    BANCA_INICIAL,
+    EXTRA_APOSTA_PCT,
+    EXTRA_EDGE_MINIMO,
+    EXTRA_MIN_JOGOS_AMOSTRA,
+    EXTRA_ODD_MAXIMA,
+    EXTRA_ODD_MINIMA,
+    EXTRA_PROB_MINIMA_COMBINADA,
+    EXTRA_PROB_MINIMA_INDIVIDUAL,
+    EXTRA_QTD_JOGOS,
+    MARGEM_VALOR_MINIMA,
+    MAX_JOGOS_ENVIO,
+)
 from src.motor import MotorPreditivo
-from src.api_client import coletar_dados_mercado, buscar_odds_over15_na_lista
-from src.config import BANCA_INICIAL
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -27,70 +45,180 @@ def enviar_telegram(mensagem: str):
         print(f"⚠️ Erro Telegram: {e}")
 
 
+def selecionar_apostas(jogos_do_dia):
+    apostas_valor = []
+    for jogo in jogos_do_dia:
+        robo = MotorPreditivo(media_gols_liga=jogo.get("media_gols_liga", 2.65))
+        xg_casa, xg_fora = robo.calcular_forcas(
+            jogo["gc"], jogo["sc"], jogo["gf"], jogo["sf"]
+        )
+        prob_real = robo.probabilidade_over_15(xg_casa, xg_fora)
+        odd_casa = jogo.get("odd_over15")
+        if not odd_casa:
+            continue
+
+        prob_implicita = 1.0 / odd_casa
+        edge = prob_real - prob_implicita
+        if edge < MARGEM_VALOR_MINIMA:
+            print(
+                f"   Sem valor: {jogo['time_casa']} vs {jogo['time_fora']} | "
+                f"odd {odd_casa:.2f} | modelo {prob_real*100:.1f}% | edge {edge*100:.1f} p.p."
+            )
+            continue
+
+        kelly = robo.criterio_kelly(prob_real, odd_casa)
+        if kelly <= 0:
+            continue
+        # Reduz a confianca do modelo aproximando 30% da estimativa da
+        # probabilidade implicita do mercado. Nao e calibracao definitiva, mas
+        # evita usar a previsao bruta no bilhete extra.
+        prob_ajustada = 0.70 * prob_real + 0.30 * prob_implicita
+        apostas_valor.append(
+            {
+                "jogo": f"{jogo['time_casa']} vs {jogo['time_fora']}",
+                "odd": odd_casa,
+                "prob": prob_real,
+                "prob_ajustada": prob_ajustada,
+                "edge": edge,
+                "kelly": kelly,
+                "liga": jogo.get("liga", ""),
+                "bookmaker": jogo.get("bookmaker", ""),
+                "data": jogo.get("data", ""),
+                "xg_total": xg_casa + xg_fora,
+                "amostra_casa": int(jogo.get("amostra_casa") or 0),
+                "amostra_fora": int(jogo.get("amostra_fora") or 0),
+            }
+        )
+
+    apostas_valor.sort(key=lambda item: (item["edge"], item["kelly"]), reverse=True)
+    return apostas_valor
+
+
+def montar_bilhete_extra(apostas):
+    """Escolhe a multipla mais segura que alcance a faixa de odd desejada."""
+    if not ATIVAR_BILHETE_EXTRA:
+        return None
+
+    candidatos = [
+        aposta
+        for aposta in apostas
+        if aposta["prob_ajustada"] >= EXTRA_PROB_MINIMA_INDIVIDUAL
+        and aposta["edge"] >= EXTRA_EDGE_MINIMO
+        and min(aposta["amostra_casa"], aposta["amostra_fora"])
+        >= EXTRA_MIN_JOGOS_AMOSTRA
+    ]
+    if len(candidatos) < EXTRA_QTD_JOGOS:
+        return None
+
+    opcoes = []
+    for selecoes in combinations(candidatos, EXTRA_QTD_JOGOS):
+        odd_final = prod(item["odd"] for item in selecoes)
+        prob_combinada = prod(item["prob_ajustada"] for item in selecoes)
+        if not (EXTRA_ODD_MINIMA <= odd_final <= EXTRA_ODD_MAXIMA):
+            continue
+        if prob_combinada < EXTRA_PROB_MINIMA_COMBINADA:
+            continue
+
+        ligas_distintas = len({item.get("liga") for item in selecoes})
+        opcoes.append(
+            {
+                "selecoes": list(selecoes),
+                "odd_final": odd_final,
+                "prob_combinada": prob_combinada,
+                # Primeiro privilegia ligas diferentes; depois, maior chance.
+                "score": (ligas_distintas, prob_combinada, -odd_final),
+            }
+        )
+
+    return max(opcoes, key=lambda item: item["score"]) if opcoes else None
+
+
+def montar_mensagem_apostas(apostas, total_analisado):
+    selecionadas = apostas[:MAX_JOGOS_ENVIO]
+    mensagem = (
+        f"✅ <b>{len(selecionadas)} selecao(oes) de valor - Over 1.5</b>\n"
+        f"Analisados com dados completos: {total_analisado}\n\n"
+    )
+    for indice, aposta in enumerate(selecionadas, 1):
+        valor = BANCA_INICIAL * aposta["kelly"]
+        mensagem += f"⚽ <b>{indice}. {escape(aposta['jogo'])}</b>\n"
+        if aposta.get("liga"):
+            mensagem += f"🏆 {escape(aposta['liga'])}\n"
+        mensagem += (
+            f"📈 Odd: {aposta['odd']:.2f} | Modelo: {aposta['prob']*100:.1f}%\n"
+            f"➕ Vantagem estimada: {aposta['edge']*100:.1f} p.p.\n"
+            f"💵 Entrada individual sugerida: R$ {valor:.2f}\n"
+        )
+        if aposta.get("bookmaker"):
+            mensagem += f"🏦 Odd em: {escape(aposta['bookmaker'])}\n"
+        mensagem += "\n"
+    mensagem += (
+        "⚠️ Odds mudam rapidamente. Reconfira antes de apostar. "
+        "Estimativa estatistica nao garante resultado."
+    )
+    return mensagem
+
+
+def montar_mensagem_bilhete_extra(bilhete):
+    valor = BANCA_INICIAL * EXTRA_APOSTA_PCT
+    retorno_bruto = valor * bilhete["odd_final"]
+    mensagem = (
+        "🔥 <b>BILHETE EXTRA EQUILIBRADO</b>\n"
+        "Somente sinais de maior confianca\n\n"
+    )
+    for indice, aposta in enumerate(bilhete["selecoes"], 1):
+        mensagem += (
+            f"⚽ <b>{indice}. {escape(aposta['jogo'])}</b>\n"
+            f"📈 Odd: {aposta['odd']:.2f} | "
+            f"Prob. ajustada: {aposta['prob_ajustada']*100:.1f}%\n"
+            f"📊 Amostra casa/fora: {aposta['amostra_casa']}/{aposta['amostra_fora']} jogos\n\n"
+        )
+
+    mensagem += (
+        f"🎯 <b>Odd combinada:</b> {bilhete['odd_final']:.2f}\n"
+        f"🧮 <b>Probabilidade conjunta estimada:</b> "
+        f"{bilhete['prob_combinada']*100:.1f}%\n"
+        f"💵 <b>Entrada maxima:</b> R$ {valor:.2f} "
+        f"({EXTRA_APOSTA_PCT*100:.1f}% da banca)\n"
+        f"💰 <b>Retorno bruto potencial:</b> R$ {retorno_bruto:.2f}\n\n"
+        "⚠️ A probabilidade conjunta pressupoe independencia entre jogos e "
+        "nao representa garantia de acerto."
+    )
+    return mensagem
+
+
 def main():
     try:
         enviar_telegram("🤖 Robô iniciado. Analisando múltiplas ligas internacionais. Aguarde...")
 
-        robo = MotorPreditivo(media_gols_liga=2.65)
-        jogos_do_dia = coletar_dados_mercado()
-        apostas_valor = []
+        jogos_do_dia, diagnostico = coletar_dados_mercado(com_diagnostico=True)
+        apostas_valor = selecionar_apostas(jogos_do_dia)
 
-        for jogo in jogos_do_dia:
-            xg_casa, xg_fora = robo.calcular_forcas(jogo["gc"], jogo["sc"], jogo["gf"], jogo["sf"])
-            prob_real = robo.probabilidade_over_15(xg_casa, xg_fora)
-
-            odd_casa = buscar_odds_over15_na_lista(
-                jogo["time_casa"], jogo["time_fora"], jogo.get("odds_lista", [])
+        if apostas_valor:
+            enviar_telegram(montar_mensagem_apostas(apostas_valor, len(jogos_do_dia)))
+            bilhete_extra = montar_bilhete_extra(apostas_valor)
+            if bilhete_extra:
+                enviar_telegram(montar_mensagem_bilhete_extra(bilhete_extra))
+            elif ATIVAR_BILHETE_EXTRA:
+                enviar_telegram(
+                    "🛡️ <b>Bilhete extra nao liberado hoje.</b>\n\n"
+                    "Nao houve uma combinacao que cumprisse simultaneamente os "
+                    "filtros de probabilidade, vantagem, amostra e faixa de odd. "
+                    "O robo nao forcara uma multipla apenas para gerar palpite."
+                )
+        elif jogos_do_dia:
+            enviar_telegram(
+                "ℹ️ <b>A coleta funcionou, mas nao houve aposta de valor.</b>\n\n"
+                f"Foram analisados {len(jogos_do_dia)} jogo(s) com odds e estatisticas. "
+                f"Nenhum superou a probabilidade implicita por pelo menos "
+                f"{MARGEM_VALOR_MINIMA*100:.1f} pontos percentuais.\n\n"
+                "Isso e diferente de falha na coleta e pode ser um resultado normal."
             )
-
-            if not odd_casa:
-                print(f"   ℹ️ Sem odd Over 1.5 para {jogo['time_casa']} vs {jogo['time_fora']}")
-                continue
-
-            prob_implicita = 1.0 / odd_casa
-            if prob_real > prob_implicita:
-                kelly = robo.criterio_kelly(prob_real, odd_casa)
-                if kelly > 0:
-                    apostas_valor.append({
-                        "jogo": f"{jogo['time_casa']} vs {jogo['time_fora']}",
-                        "odd": odd_casa,
-                        "prob": prob_real,
-                        "kelly": kelly,
-                        "liga": jogo.get("liga", ""),
-                    })
-                    print(
-                        f"   💰 VALOR: {jogo['time_casa']} vs {jogo['time_fora']} | "
-                        f"Odd {odd_casa:.2f} | Prob {prob_real*100:.1f}% | Kelly {kelly*100:.2f}%"
-                    )
-
-        if len(apostas_valor) >= 3:
-            # Ordena pelo Kelly (mais valor primeiro)
-            apostas_valor.sort(key=lambda x: x["kelly"], reverse=True)
-            bilhete = apostas_valor[:3]
-            odd_final = 1.0
-            for aposta in bilhete:
-                odd_final *= aposta["odd"]
-
-            kelly_medio = sum(b["kelly"] for b in bilhete) / 3
-            valor_aposta = BANCA_INICIAL * kelly_medio
-
-            mensagem = "🚨 <b>ALERTA DE APOSTA DE VALOR - OVER 1.5 GOLS</b> 🚨\n\n"
-            for i, aposta in enumerate(bilhete, 1):
-                mensagem += f"⚽ <b>Jogo {i}:</b> {aposta['jogo']}\n"
-                mensagem += f"📈 Odd: {aposta['odd']:.2f} | Prob: {aposta['prob']*100:.1f}%\n"
-                if aposta.get("liga"):
-                    mensagem += f"🏆 {aposta['liga']}\n"
-                mensagem += "\n"
-
-            mensagem += f"💵 <b>Odd Final do Bilhete:</b> {odd_final:.2f}\n"
-            mensagem += f"📌 <b>Apostar:</b> R$ {valor_aposta:.2f}\n"
-            mensagem += f"💰 <b>Banca:</b> R$ {BANCA_INICIAL:.2f}\n"
-
-            enviar_telegram(mensagem)
         else:
             enviar_telegram(
-                f"❌ O robô varreu todas as ligas, analisou {len(jogos_do_dia)} jogos, "
-                f"mas não encontrou 3 partidas com valor matemático para Over 1.5 hoje."
+                "❌ <b>Nenhum jogo chegou ao motor matematico.</b>\n\n"
+                f"<pre>{escape(diagnostico.resumo())}</pre>\n\n"
+                "Confira no GitHub Actions a falha indicada acima."
             )
 
     except Exception as e:
