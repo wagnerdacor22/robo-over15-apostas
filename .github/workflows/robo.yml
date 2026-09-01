@@ -6,9 +6,14 @@ on:
     - cron: '0 14 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: robo-over15-diario
+  cancel-in-progress: false
+
 jobs:
   run-robo:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Baixar o código
         uses: actions/checkout@v4
@@ -26,8 +31,25 @@ jobs:
         env:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BANCA_INICIAL: ${{ secrets.BANCA_INICIAL || '1000' }}
+          FUSO_HORARIO: America/Sao_Paulo
+          DIAS_ANALISE: '1'
+          MAX_JOGOS_ENVIO: '3'
+          MARGEM_VALOR_MINIMA: '0.03'
+          ATIVAR_BILHETE_EXTRA: 'true'
+          EXTRA_QTD_JOGOS: '2'
+          EXTRA_PROB_MINIMA_INDIVIDUAL: '0.78'
+          EXTRA_EDGE_MINIMO: '0.04'
+          EXTRA_ODD_MINIMA: '1.75'
+          EXTRA_ODD_MAXIMA: '2.60'
+          EXTRA_PROB_MINIMA_COMBINADA: '0.55'
+          EXTRA_MIN_JOGOS_AMOSTRA: '4'
+          EXTRA_APOSTA_PCT: '0.005'
+          API_FOOTBALL_INTERVALO_SEGUNDOS: '6.2'
+          ODDS_REGIONS: eu
+          PYTHONUNBUFFERED: '1'
           TZ: America/Sao_Paulo
         run: python -m src.bot
