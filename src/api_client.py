@@ -150,7 +150,13 @@ def _temporada(liga, data):
 
 
 def _iso_utc(valor):
-    return valor.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    """Formata timestamps exatamente como exigido pela The Odds API.
+
+    A API aceita YYYY-MM-DDTHH:MM:SSZ. Usar ``isoformat()`` em um
+    datetime criado com ``time.max`` preserva microssegundos
+    (ex.: 23:59:59.999999Z), o que faz ``commenceTimeTo`` retornar HTTP 422.
+    """
+    return valor.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _mensagem_payload(payload):
