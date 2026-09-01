@@ -36,6 +36,8 @@ FUSO_HORARIO = os.getenv("FUSO_HORARIO", "America/Sao_Paulo")
 DIAS_ANALISE = _inteiro("DIAS_ANALISE", 4, 1)
 MAX_JOGOS_POR_LIGA = _inteiro("MAX_JOGOS_POR_LIGA", 8, 1)
 MAX_JOGOS_ENVIO = _inteiro("MAX_JOGOS_ENVIO", 3, 1)
+MAX_ODDS_EVENTOS_POR_EXECUCAO = _inteiro("MAX_ODDS_EVENTOS_POR_EXECUCAO", 10, 1)
+MAX_ODDS_EVENTOS_POR_LIGA = _inteiro("MAX_ODDS_EVENTOS_POR_LIGA", 3, 1)
 MARGEM_VALOR_MINIMA = _decimal("MARGEM_VALOR_MINIMA", 0.03, 0.0)
 
 # Bilhete extra: duas selecoes fortes para buscar uma odd combinada maior sem
