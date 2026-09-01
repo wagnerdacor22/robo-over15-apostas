@@ -38,6 +38,8 @@ jobs:
           FUSO_HORARIO: America/Sao_Paulo
           DIAS_ANALISE: '4'
           MAX_JOGOS_ENVIO: '3'
+          MAX_ODDS_EVENTOS_POR_EXECUCAO: '10'
+          MAX_ODDS_EVENTOS_POR_LIGA: '3'
           MARGEM_VALOR_MINIMA: '0.03'
           ATIVAR_BILHETE_EXTRA: 'true'
           EXTRA_QTD_JOGOS: '2'
