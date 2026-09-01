@@ -104,10 +104,15 @@ class DiagnosticoColeta:
             self.erros.append(item)
 
     def resumo(self, limite_erros=4):
+        if self.eventos_com_odds == 0:
+            fixtures_resumo = "nao consultados (nenhum evento com odds)"
+        else:
+            fixtures_resumo = str(self.fixtures_encontradas)
+
         linhas = [
             f"Periodo: {self.inicio} a {self.fim}",
             f"Odds: {self.eventos_com_odds} evento(s)",
-            f"Fixtures: {self.fixtures_encontradas}",
+            f"Fixtures: {fixtures_resumo}",
             f"Com odds Over 1.5: {self.jogos_com_odds}",
             f"Com estatisticas: {self.jogos_com_estatisticas}",
         ]
